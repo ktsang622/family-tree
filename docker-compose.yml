@@ -1,0 +1,36 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: person_registry_pg
+    restart: always
+    environment:
+      POSTGRES_DB: person_registry
+      POSTGRES_USER: registry_user
+      POSTGRES_PASSWORD: registry_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # - ./init:/docker-entrypoint-initdb.d
+
+  family-tree:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile
+    env_file:
+      - ./.env
+    depends_on:
+      - postgres
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./.env:/app/.env
+      - nextjs_cache:/app/.next
+    ports:
+      - "3888:3888"
+
+volumes:
+  pgdata:
+  node_modules:
+  nextjs_cache:

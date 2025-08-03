@@ -1,0 +1,195 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+import type { Node, Link, FamilyTreeData } from '@/types/familyTree';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+
+const boxWidth = 180;
+const boxHeight = 70;
+const levelSpacing = 240;
+const rowSpacing = 100;
+
+type Props = {
+  personId: string;
+};
+
+export default function FamilyTree({ personId }: Props) {
+  const [treeData, setTreeData] = useState<FamilyTreeData>({ nodes: [], links: [], expanded: '' });
+  const [error, setError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string>(personId);
+
+  const [lines, setLines] = useState<JSX.Element[]>([]);
+  const [nodeBoxes, setNodeBoxes] = useState<JSX.Element[]>([]);
+
+  useEffect(() => {
+    axios
+      .get(`/api/tree/init?person_id=${personId}`)
+      .then((res) => {
+        console.log('✅ Tree data loaded:', res.data);
+        setTreeData(res.data);
+      })
+      .catch((err) => {
+        console.error('❌ Init failed', err);
+        setError('Could not load tree');
+      });
+  }, [personId]);
+
+  useEffect(() => {
+    const levelMap: Record<number, Node[]> = {};
+    treeData.nodes.forEach((node) => {
+      const level = typeof node.level === 'number' ? node.level : 0;
+      if (!levelMap[level]) levelMap[level] = [];
+      levelMap[level].push(node);
+    });
+
+    const sortedLevels = Object.keys(levelMap)
+      .map(Number)
+      .sort((a, b) => a - b);
+
+    const boxes: JSX.Element[] = [];
+    const positions: Record<string, { x: number; y: number }> = {};
+
+    sortedLevels.forEach((level, colIndex) => {
+      levelMap[level].forEach((person, rowIndex) => {
+        const x = colIndex * levelSpacing;
+        const y = rowIndex * rowSpacing;
+        positions[person.id] = { x: x + boxWidth / 2, y: y + boxHeight / 2 };
+
+        boxes.push(
+          <div
+            key={person.id}
+            style={{
+              position: 'absolute',
+              top: y,
+              left: x,
+              width: boxWidth,
+              height: boxHeight,
+              border: '1px solid #444',
+              borderRadius: 8,
+              padding: 8,
+              background: person.id === treeData.expanded ? '#ffc' : '#fdfdfd',
+              fontFamily: 'sans-serif',
+              fontSize: 12,
+              boxShadow: '2px 2px 4px rgba(0,0,0,0.1)',
+              zIndex: 2,
+              cursor: 'pointer',
+            }}
+            onClick={() => handleExpand(person.id)}
+          >
+            <strong>{person.full_name}</strong>
+            <br />
+            {person.id_type_1 || ''}: {person.id_1 || ''}
+          </div>
+        );
+      });
+    });
+
+    const svgLines = treeData.links.map((link, i) => {
+      const from = positions[link.from];
+      const to = positions[link.to];
+      if (!from || !to) return null;
+
+      return (
+        <line
+          key={i}
+          x1={from.x}
+          y1={from.y}
+          x2={to.x}
+          y2={to.y}
+          stroke="gray"
+          strokeWidth={2}
+        />
+      );
+    });
+
+    setNodeBoxes(boxes);
+    setLines(svgLines);
+  }, [treeData]);
+
+  const handleExpand = async (nodeId: string) => {
+    try {
+      const res = await axios.post('/api/tree/expand', {
+        nodeId,
+        nodes: treeData.nodes,
+        links: treeData.links,
+      });
+
+      const { deltaNodes, deltaLinks } = res.data;
+
+      const nodeMap = new Map<string, Node>();
+      [...treeData.nodes, ...deltaNodes].forEach((n) => nodeMap.set(n.id, n));
+      const mergedNodes = Array.from(nodeMap.values());
+
+      const linkKey = (l: Link) => `${l.from}-${l.to}-${l.relationship}`;
+      const linkMap = new Map<string, Link>();
+      [...treeData.links, ...deltaLinks].forEach((l) => linkMap.set(linkKey(l), l));
+      const mergedLinks = Array.from(linkMap.values());
+
+      setTreeData({
+        nodes: mergedNodes,
+        links: mergedLinks,
+        expanded: nodeId,
+      });
+    } catch (err) {
+      console.error('❌ Expansion failed', err);
+      setError('Could not expand node');
+    }
+  };
+
+  const uniquePeople = [...new Map(treeData.nodes.map((n) => [n.id, n])).values()];
+
+  return (
+    <div style={{ width: '100%', height: '100vh', position: 'relative', overflow: 'hidden' }}>
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+
+      <div style={{ padding: 10 }}>
+        <label>
+          Start From:{' '}
+          <select
+            value={selectedId}
+            onChange={(e) => {
+              const newId = e.target.value;
+              setSelectedId(newId);
+              window.location.href = `/showMap/${newId}`;
+            }}
+          >
+            {uniquePeople.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.full_name} ({person.id_1 || person.id})
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <TransformWrapper>
+<TransformComponent>
+  <div
+    style={{
+      position: 'relative',
+      width: '2000px',         // or dynamically calculated maxX + margin
+      height: '1500px',
+      background: '#f9f9f9',  // helps visually debug
+    }}
+  >
+    {nodeBoxes}
+    <svg
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 1,
+      }}
+    >
+      {lines}
+    </svg>
+  </div>
+</TransformComponent>
+      </TransformWrapper>
+    </div>
+  );
+}
